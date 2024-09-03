@@ -1,4 +1,4 @@
-# Running an LLM on the ESP32
+# Running a LLM on the ESP32
 ![LLM on ESP32](/ESP32_LLM.jpg)
 
 ## Summary
