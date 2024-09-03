@@ -1,4 +1,10 @@
 /* Inference for Llama-2 Transformer model in pure C */
+/**
+ * Original author of this:
+ * https://github.com/karpathy/llama2.c 
+ * 
+ * Slight modifications added to make it ESP32 friendly
+ */
 
 #include "llm.h"
 #include <stdio.h>

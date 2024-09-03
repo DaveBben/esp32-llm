@@ -1,6 +1,13 @@
 #ifndef LLM_H
 #define LLM_H
 
+/**
+ * Original author of this:
+ * https://github.com/karpathy/llama2.c 
+ * 
+ * Slight modifications added to make it ESP32 friendly
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
