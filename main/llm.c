@@ -219,8 +219,8 @@ void build_transformer(Transformer *t, char *checkpoint_path)
 
     matmul_params = malloc(sizeof(MatMulTaskParams));
     forward_params = malloc(sizeof(ForwardTaskParams));
-    xTaskCreatePinnedToCore(matmul_task, "MatMul2", 2048, matmul_params, 19, &matmul_task_2, 1);             // Run on Core 0
-    xTaskCreatePinnedToCore(forward_task, "ForwardTask", 2048, forward_params, 19, &handle_forward_task, 1); // Run on Core 0
+    xTaskCreatePinnedToCore(matmul_task, "MatMul2", 2048, matmul_params, 19, &matmul_task_2, 1);             // Run on Core 1
+    xTaskCreatePinnedToCore(forward_task, "ForwardTask", 2048, forward_params, 19, &handle_forward_task, 1); // Run on Core 1
     ESP_LOGI(TAG, "Created FreeRTOS Tasks");
 }
 
