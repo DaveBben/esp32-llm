@@ -1,0 +1,21 @@
+## IDF Component Manager Manifest File
+dependencies:
+  espressif/esp-dsp: "*"
+  ## Required IDF version
+  idf:
+    version: ">=4.1.0"
+  u8g2:
+    git: https://github.com/olikraus/u8g2.git
+  u8g2-hal-esp-idf:
+    git: https://github.com/mkfrey/u8g2-hal-esp-idf.git
+  # # Put list of dependencies here
+  # # For components maintained by Espressif:
+  # component: "~1.0.0"
+  # # For 3rd party components:
+  # username/component: ">=1.0.0,<2.0.0"
+  # username2/component2:
+  #   version: "~1.0.0"
+  #   # For transient dependencies `public` flag can be set.
+  #   # `public` flag doesn't have an effect dependencies of the `main` component.
+  #   # All dependencies of `main` are public by default.
+  #   public: true
