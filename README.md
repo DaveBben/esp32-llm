@@ -1,8 +1,9 @@
 # Running a LLM on the ESP32
 ![LLM on ESP32](/ESP32_LLM.jpg)
+![LLM Output](/ESP32%20LLM%20Video_1.gif)
 
 ## Summary
-I wanted to see if it was possible to run a Large Language Model (LLM) on the ESP32. [Surprisingly it is possible](https://youtu.be/E6E_KrfyWFQ), though probably not very useful.
+I wanted to see if it was possible to run a Large Language Model (LLM) on the ESP32. Surprisingly it is possible, though probably not very useful.
 
 The "Large" Language Model used is actually quite small. It is a 260K parameter [tinyllamas checkpoint](https://huggingface.co/karpathy/tinyllamas/tree/main/stories260K) trained on the [tiny stories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset.
 
