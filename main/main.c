@@ -46,7 +46,7 @@ void init_display(void)
 }
 
 /**
- * @brief intializes SPIFFS storage
+ * @brief initializes SPIFFS storage
  * 
  */
 void init_storage(void)
