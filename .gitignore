@@ -1,3 +1,7 @@
 build/
 .vscode
 managed_components/
+
+# Thumnail cache
+.DS_Store
+Thumbs.db
