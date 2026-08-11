@@ -863,7 +863,7 @@ int sample_argmax(v4sf *probabilities, int n)
     return max_i;
 }
 
-int sample_mult(v4sf *probabilities, int n, v4sf coin)
+int sample_mult(v4sf *probabilities, int n, float coin)
 {
     // sample index from probabilities (they must sum to 1!)
     // coin is a random number in [0, 1), usually from random_f32()
@@ -890,7 +890,7 @@ int compare(const void *a, const void *b)
     return 0;
 }
 
-int sample_topp(v4sf *probabilities, int n, v4sf topp, ProbIndex *probindex, v4sf coin)
+int sample_topp(v4sf *probabilities, int n, float topp, ProbIndex *probindex, float coin)
 {
     // top-p sampling (or "nucleus sampling") samples from the smallest set of
     // tokens that exceed probability topp. This way we never sample tokens that
@@ -940,7 +940,7 @@ int sample_topp(v4sf *probabilities, int n, v4sf topp, ProbIndex *probindex, v4s
     return probindex[last_idx].index; // in case of rounding errors
 }
 
-void build_sampler(Sampler *sampler, int vocab_size, v4sf temperature, v4sf topp, unsigned long long rng_seed)
+void build_sampler(Sampler *sampler, int vocab_size, float temperature, float topp, unsigned long long rng_seed)
 {
     sampler->vocab_size = vocab_size;
     sampler->temperature = temperature;
@@ -964,7 +964,7 @@ unsigned int random_u32(unsigned long long *state)
     *state ^= *state >> 27;
     return (*state * 0x2545F4914F6CDD1Dull) >> 32;
 }
-v4sf random_f32(unsigned long long *state)
+float random_f32(unsigned long long *state)
 { // random v4sf32 in [0,1)
     return (random_u32(state) >> 8) / 16777216.0f;
 }
@@ -988,7 +988,7 @@ int sample(Sampler *sampler, v4sf *logits)
         // apply softmax to the logits to get the probabilities for next token
         softmax(logits, sampler->vocab_size);
         // flip a (v4sf) coin (this is our source of entropy for sampling)
-        v4sf coin = random_f32(&sampler->rng_state);
+        float coin = random_f32(&sampler->rng_state);
         // we sample from this distribution to get the next token
         if (sampler->topp <= 0 || sampler->topp >= 1)
         {
