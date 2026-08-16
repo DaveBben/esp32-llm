@@ -294,16 +294,11 @@ void softmax(v4sf *x, int size)
 
 void matmul_task(void *params)
 {
-    const TickType_t xDelay = 1 / portTICK_PERIOD_MS;
     MatMulTaskParams *p = (MatMulTaskParams *)params;
-    TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
-    char *tName = pcTaskGetName(current_task);
-    // ESP_LOGI(TAG, "Created Task %s", tName);
     for (;;)
     {
         if (xSemaphoreTake(semaDataReady, portMAX_DELAY) == pdTRUE)
         {
-            //   ESP_LOGI(TAG, "Started Task %s", tName);
             for (int i = p->start; i < p->end; i++)
             {
                 v4sf val = 0.0f;
@@ -311,7 +306,6 @@ void matmul_task(void *params)
                 dsps_dotprod_f32_aes3(row, p->x, &val, p->n);
                 p->xout[i] = val;
             }
-            //    ESP_LOGI(TAG, "Completed task %s", tName);
             xSemaphoreGive(semaDataReady);
             xEventGroupSync(xEventGroup, p->task_num, ALL_SYNC_BITS, portMAX_DELAY);
         }
@@ -320,16 +314,11 @@ void matmul_task(void *params)
 
 void forward_task(void *params)
 {
-    const TickType_t xDelay = 1 / portTICK_PERIOD_MS;
     ForwardTaskParams *t_params = (ForwardTaskParams *)params;
-    TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
-    char *tName = pcTaskGetName(current_task);
-    // ESP_LOGI(TAG, "Created Task %s", tName);
     for (;;)
     {
         if (xSemaphoreTake(semaForwardDataReady, portMAX_DELAY) == pdTRUE)
         {
-            //   ESP_LOGI(TAG, "Started Task %s", tName);
             int h;
             // #pragma omp parallel for private(h)
             for (h = t_params->start; h < t_params->end; h++)
@@ -373,7 +362,6 @@ void forward_task(void *params)
                     }
                 }
             }
-            //   ESP_LOGI(TAG, "Completed task %s", tName);
             xSemaphoreGive(semaForwardDataReady);
             xEventGroupSync(ForwardEventGroup, t_params->task_num, ALL_FORWARD_TASKS, portMAX_DELAY);
         }
@@ -1109,7 +1097,7 @@ long time_in_ms()
 // ----------------------------------------------------------------------------
 // generation loop
 
-void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps, generated_complete_cb cb_done)
+void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps, generated_complete_cb cb_done, generated_token_cb cb_token)
 {
     char *empty_prompt = "";
     if (prompt == NULL)
@@ -1158,8 +1146,10 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
 
         // print the token as string, decode it with the Tokenizer object
         char *piece = decode(tokenizer, token, next);
-        safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
-        fflush(stdout);
+        if (cb_token != NULL)
+        {
+            cb_token(piece);
+        }
         token = next;
 
         // init the timer here because the first iteration can be slower
@@ -1168,14 +1158,11 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
             start = time_in_ms();
         }
     }
-    printf("\n");
-
     // report achieved tok/s (pos-1 because the timer starts after first iteration)
     if (pos > 1)
     {
         long end = time_in_ms();
         float tks = (pos - 1) / (double)(end - start) * 1000;
-        fprintf(stderr, "achieved tok/s: %f\n", tks);
         if (cb_done != NULL)
         {
             cb_done(tks);
