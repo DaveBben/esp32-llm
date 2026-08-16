@@ -18,7 +18,6 @@
 #include "esp_system.h"
 #include "esp_dsp.h"
 #include "esp_attr.h"
-#include "esp_heap_caps.h"
 
 #define MAP_FAILED NULL
 #define munmap(ptr, length) custom_munmap(ptr)
@@ -294,11 +293,16 @@ void softmax(v4sf *x, int size)
 
 void matmul_task(void *params)
 {
+    const TickType_t xDelay = 1 / portTICK_PERIOD_MS;
     MatMulTaskParams *p = (MatMulTaskParams *)params;
+    TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
+    char *tName = pcTaskGetName(current_task);
+    // ESP_LOGI(TAG, "Created Task %s", tName);
     for (;;)
     {
         if (xSemaphoreTake(semaDataReady, portMAX_DELAY) == pdTRUE)
         {
+            //   ESP_LOGI(TAG, "Started Task %s", tName);
             for (int i = p->start; i < p->end; i++)
             {
                 v4sf val = 0.0f;
@@ -306,6 +310,7 @@ void matmul_task(void *params)
                 dsps_dotprod_f32_aes3(row, p->x, &val, p->n);
                 p->xout[i] = val;
             }
+            //    ESP_LOGI(TAG, "Completed task %s", tName);
             xSemaphoreGive(semaDataReady);
             xEventGroupSync(xEventGroup, p->task_num, ALL_SYNC_BITS, portMAX_DELAY);
         }
@@ -314,11 +319,16 @@ void matmul_task(void *params)
 
 void forward_task(void *params)
 {
+    const TickType_t xDelay = 1 / portTICK_PERIOD_MS;
     ForwardTaskParams *t_params = (ForwardTaskParams *)params;
+    TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
+    char *tName = pcTaskGetName(current_task);
+    // ESP_LOGI(TAG, "Created Task %s", tName);
     for (;;)
     {
         if (xSemaphoreTake(semaForwardDataReady, portMAX_DELAY) == pdTRUE)
         {
+            //   ESP_LOGI(TAG, "Started Task %s", tName);
             int h;
             // #pragma omp parallel for private(h)
             for (h = t_params->start; h < t_params->end; h++)
@@ -362,6 +372,7 @@ void forward_task(void *params)
                     }
                 }
             }
+            //   ESP_LOGI(TAG, "Completed task %s", tName);
             xSemaphoreGive(semaForwardDataReady);
             xEventGroupSync(ForwardEventGroup, t_params->task_num, ALL_FORWARD_TASKS, portMAX_DELAY);
         }
@@ -881,31 +892,16 @@ int compare(const void *a, const void *b)
 
 int sample_topp(v4sf *probabilities, int n, v4sf topp, ProbIndex *probindex, v4sf coin)
 {
-    // Defensive checks. If top-p cannot be used safely, fall back to
-    // ordinary multinomial sampling rather than crashing.
-    if (probabilities == NULL || n <= 0)
-    {
-        ESP_LOGE(TAG, "sample_topp received invalid probabilities/n");
-        return 0;
-    }
-
-    if (probindex == NULL)
-    {
-        ESP_LOGW(TAG, "Top-p buffer is NULL; falling back to multinomial sampling");
-        return sample_mult(probabilities, n, coin);
-    }
-
-    // If top-p is disabled, don't enter nucleus sampling at all.
-    if (topp <= 0.0f || topp >= 1.0f)
-    {
-        return sample_mult(probabilities, n, coin);
-    }
+    // top-p sampling (or "nucleus sampling") samples from the smallest set of
+    // tokens that exceed probability topp. This way we never sample tokens that
+    // have very low probabilities and are less likely to go "off the rails".
+    // coin is a random number in [0, 1), usually from random_f32()
 
     int n0 = 0;
-
-    // Values smaller than this cutoff cannot be part of the nucleus.
+    // quicksort indices in descending order of probabilities
+    // values smaller than (1 - topp) / (n - 1) cannot be part of the result
+    // so for efficiency we crop these out as candidates before sorting
     const v4sf cutoff = (1.0f - topp) / (n - 1);
-
     for (int i = 0; i < n; i++)
     {
         if (probabilities[i] >= cutoff)
@@ -915,38 +911,24 @@ int sample_topp(v4sf *probabilities, int n, v4sf topp, ProbIndex *probindex, v4s
             n0++;
         }
     }
-
-    // Extremely defensive fallback. This should normally never happen.
-    if (n0 == 0)
-    {
-        ESP_LOGW(TAG, "Top-p produced zero candidates; falling back to argmax");
-        return sample_argmax(probabilities, n);
-    }
-
     qsort(probindex, n0, sizeof(ProbIndex), compare);
 
+    // truncate the list where cumulative probability exceeds topp
     v4sf cumulative_prob = 0.0f;
-    int last_idx = n0 - 1;
-
+    int last_idx = n0 - 1; // in case of rounding errors consider all elements
     for (int i = 0; i < n0; i++)
     {
         cumulative_prob += probindex[i].prob;
         if (cumulative_prob > topp)
         {
             last_idx = i;
-            break;
+            break; // we've exceeded topp by including last_idx
         }
     }
 
-    if (cumulative_prob <= 0.0f)
-    {
-        ESP_LOGW(TAG, "Top-p cumulative probability invalid; falling back to argmax");
-        return sample_argmax(probabilities, n);
-    }
-
+    // sample from the truncated list
     v4sf r = coin * cumulative_prob;
     v4sf cdf = 0.0f;
-
     for (int i = 0; i <= last_idx; i++)
     {
         cdf += probindex[i].prob;
@@ -955,8 +937,7 @@ int sample_topp(v4sf *probabilities, int n, v4sf topp, ProbIndex *probindex, v4s
             return probindex[i].index;
         }
     }
-
-    return probindex[last_idx].index;
+    return probindex[last_idx].index; // in case of rounding errors
 }
 
 void build_sampler(Sampler *sampler, int vocab_size, v4sf temperature, v4sf topp, unsigned long long rng_seed)
@@ -965,56 +946,14 @@ void build_sampler(Sampler *sampler, int vocab_size, v4sf temperature, v4sf topp
     sampler->temperature = temperature;
     sampler->topp = topp;
     sampler->rng_state = rng_seed;
-    sampler->probindex = NULL;
-
-    ESP_LOGI(TAG, "Building sampler: vocab=%d temperature=%.3f topp=%.3f",
-             vocab_size, (double)temperature, (double)topp);
-
-    // The buffer is only needed for nucleus/top-p sampling.
-    if (topp > 0.0f && topp < 1.0f)
-    {
-        size_t bytes = sampler->vocab_size * sizeof(ProbIndex);
-
-        // Prefer PSRAM because this board has external RAM available.
-        sampler->probindex = heap_caps_malloc(
-            bytes,
-            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
-        );
-
-        // Fallback to the normal heap if PSRAM allocation is unavailable.
-        if (sampler->probindex == NULL)
-        {
-            ESP_LOGW(TAG, "PSRAM allocation for sampler failed; trying normal heap");
-            sampler->probindex = malloc(bytes);
-        }
-
-        if (sampler->probindex == NULL)
-        {
-            ESP_LOGE(TAG, "Failed to allocate %u bytes for top-p sampler; top-p will be disabled",
-                     (unsigned)bytes);
-            sampler->topp = 1.0f;
-        }
-        else
-        {
-            ESP_LOGI(TAG, "Top-p buffer allocated: %u bytes at %p",
-                     (unsigned)bytes, sampler->probindex);
-        }
-    }
-    else
-    {
-        ESP_LOGI(TAG, "Top-p sampling disabled; no ProbIndex buffer allocated");
-    }
-
-    ESP_LOGI(TAG, "Sampler successfully built");
+    // buffer only used with nucleus sampling; may not need but it's ~small
+    sampler->probindex = malloc(sampler->vocab_size * sizeof(ProbIndex));
+    ESP_LOGI(TAG, "Sampler Successfully built");
 }
 
 void free_sampler(Sampler *sampler)
 {
-    if (sampler->probindex != NULL)
-    {
-        free(sampler->probindex);
-        sampler->probindex = NULL;
-    }
+    free(sampler->probindex);
 }
 
 unsigned int random_u32(unsigned long long *state)
@@ -1032,54 +971,36 @@ v4sf random_f32(unsigned long long *state)
 
 int sample(Sampler *sampler, v4sf *logits)
 {
-    if (sampler == NULL || logits == NULL)
-    {
-        ESP_LOGE(TAG, "sample() received NULL sampler/logits");
-        return 0;
-    }
-
+    // sample the token given the logits and some hyperparameters
     int next;
-
     if (sampler->temperature == 0.0f)
     {
-        // Greedy argmax sampling.
+        // greedy argmax sampling: take the token with the highest probability
         next = sample_argmax(logits, sampler->vocab_size);
     }
     else
     {
-        // Apply temperature.
+        // apply the temperature to the logits
         for (int q = 0; q < sampler->vocab_size; q++)
         {
             logits[q] /= sampler->temperature;
         }
-
-        // Convert logits to probabilities.
+        // apply softmax to the logits to get the probabilities for next token
         softmax(logits, sampler->vocab_size);
-
+        // flip a (v4sf) coin (this is our source of entropy for sampling)
         v4sf coin = random_f32(&sampler->rng_state);
-
-        // topp <= 0 or >= 1 explicitly disables nucleus sampling.
-        if (sampler->topp <= 0.0f || sampler->topp >= 1.0f)
+        // we sample from this distribution to get the next token
+        if (sampler->topp <= 0 || sampler->topp >= 1)
         {
-            next = sample_mult(logits, sampler->vocab_size, coin);
-        }
-        else if (sampler->probindex == NULL)
-        {
-            ESP_LOGW(TAG, "Top-p requested but buffer is NULL; using multinomial sampling");
+            // simply sample from the predicted probability distribution
             next = sample_mult(logits, sampler->vocab_size, coin);
         }
         else
         {
-            next = sample_topp(
-                logits,
-                sampler->vocab_size,
-                sampler->topp,
-                sampler->probindex,
-                coin
-            );
+            // top-p (nucleus) sampling, clamping the least likely tokens to zero
+            next = sample_topp(logits, sampler->vocab_size, sampler->topp, sampler->probindex, coin);
         }
     }
-
     return next;
 }
 
@@ -1097,7 +1018,7 @@ long time_in_ms()
 // ----------------------------------------------------------------------------
 // generation loop
 
-void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps, generated_complete_cb cb_done, generated_token_cb cb_token)
+void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps, generated_complete_cb cb_done)
 {
     char *empty_prompt = "";
     if (prompt == NULL)
@@ -1146,10 +1067,8 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
 
         // print the token as string, decode it with the Tokenizer object
         char *piece = decode(tokenizer, token, next);
-        if (cb_token != NULL)
-        {
-            cb_token(piece);
-        }
+        safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+        fflush(stdout);
         token = next;
 
         // init the timer here because the first iteration can be slower
@@ -1158,15 +1077,15 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
             start = time_in_ms();
         }
     }
+    printf("\n");
+
     // report achieved tok/s (pos-1 because the timer starts after first iteration)
     if (pos > 1)
     {
         long end = time_in_ms();
         float tks = (pos - 1) / (double)(end - start) * 1000;
-        if (cb_done != NULL)
-        {
-            cb_done(tks);
-        }
+        fprintf(stderr, "achieved tok/s: %f\n", tks);
+        cb_done(tks);
     }
 
     free(prompt_tokens);
